@@ -85,6 +85,33 @@ FORMAL_FIELDS = [
     "notes",
 ]
 
+FORMAL_FIELDS_GPU = ["result_type", "rewire_variant"] + FORMAL_FIELDS
+
+GATE_DIAGNOSTIC_FIELDS = [
+    "timestamp",
+    "dataset",
+    "method",
+    "rewire_variant",
+    "result_type",
+    "splits",
+    "epochs",
+    "pretrain_epochs",
+    "budget_edges_add",
+    "budget_edges_delete",
+    "confidence_mean",
+    "confidence_minmax",
+    "edge_weight_mean",
+    "edge_weight_minmax",
+    "threshold_delta",
+    "threshold_grad_norm",
+    "beta_branch_ratio",
+    "same_label_weight_mean",
+    "diff_label_weight_mean",
+    "homophily_before_after",
+    "test_acc",
+    "notes",
+]
+
 
 def resolve_device(device_name: str):
     import torch
@@ -299,6 +326,40 @@ def _method_name(args) -> str:
     return f"{args.rewire_method}+{args.model}"
 
 
+def _infer_result_type(args) -> str:
+    if args.result_type != "auto":
+        return args.result_type
+    if args.splits >= 10 and args.epochs >= 100 and args.pretrain_epochs >= 100:
+        return "full-formal"
+    if args.splits >= 5 and args.epochs >= 100:
+        return "medium"
+    if args.splits >= 3 and args.epochs >= 50:
+        return "formal-lite"
+    if args.splits == 1 and args.epochs >= 50:
+        return "pilot"
+    if args.splits == 1 and args.epochs <= 20:
+        return "smoke"
+    return "exploratory"
+
+
+def _infer_rewire_variant(args) -> str:
+    if args.rewire_variant != "auto":
+        return args.rewire_variant
+    if args.rewire_method == "none":
+        return "Original"
+    if args.rewire_method == "feast":
+        return "FeaSt"
+    if args.rewire_method == "comfy":
+        if args.budget_edges_add > 0 and args.budget_edges_delete > 0:
+            return "ComFyAddDel"
+        if args.budget_edges_add > 0:
+            return "ComFyAdd"
+        if args.budget_edges_delete > 0:
+            return "ComFyDel"
+        return "ComFyZeroBudget"
+    return args.rewire_method
+
+
 def _mean_optional(values):
     import numpy as np
 
@@ -323,13 +384,29 @@ def _fmt_optional(value):
     return "" if value is None else f"{float(value):.6f}"
 
 
-def _append_formal_records(args, metadata, num_splits, row, losses, confidence_stats, edge_weight_stats, threshold_grads, threshold_deltas, notes):
+def _append_formal_records(
+    args,
+    metadata,
+    num_splits,
+    row,
+    losses,
+    confidence_stats,
+    edge_weight_stats,
+    threshold_grads,
+    threshold_deltas,
+    gate_diagnostics,
+    notes,
+):
     from utils.logging_utils import append_csv, ensure_parent_dir
 
     method = _method_name(args)
+    result_type = _infer_result_type(args)
+    rewire_variant = _infer_rewire_variant(args)
     confidence_agg = _aggregate_stats(confidence_stats)
     edge_weight_agg = _aggregate_stats(edge_weight_stats)
     formal_row = {
+        "result_type": result_type,
+        "rewire_variant": rewire_variant,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "dataset": args.dataset,
         "method": method,
@@ -372,12 +449,48 @@ def _append_formal_records(args, metadata, num_splits, row, losses, confidence_s
         "status": "success",
         "notes": notes,
     }
-    append_csv(os.path.join("results", "formal_summary.csv"), FORMAL_FIELDS, formal_row)
+    summary_fields = FORMAL_FIELDS_GPU if os.path.basename(args.formal_summary_out).endswith("_gpu.csv") else FORMAL_FIELDS
+    if summary_fields is FORMAL_FIELDS:
+        formal_row = {key: formal_row[key] for key in FORMAL_FIELDS}
+    append_csv(args.formal_summary_out, summary_fields, formal_row)
 
-    log_path = os.path.join("results", "formal_experiment_log.md")
+    gate_agg = _aggregate_gate_diagnostics(gate_diagnostics)
+    if gate_agg:
+        gate_row = {
+            "timestamp": formal_row.get("timestamp", datetime.now().isoformat(timespec="seconds")),
+            "dataset": args.dataset,
+            "method": method,
+            "rewire_variant": rewire_variant,
+            "result_type": result_type,
+            "splits": num_splits,
+            "epochs": args.epochs,
+            "pretrain_epochs": args.pretrain_epochs,
+            "budget_edges_add": args.budget_edges_add,
+            "budget_edges_delete": args.budget_edges_delete,
+            "confidence_mean": _fmt_optional(confidence_agg.get("mean")),
+            "confidence_minmax": (
+                f"{_fmt_optional(confidence_agg.get('min'))}/{_fmt_optional(confidence_agg.get('max'))}"
+            ),
+            "edge_weight_mean": _fmt_optional(edge_weight_agg.get("mean")),
+            "edge_weight_minmax": (
+                f"{_fmt_optional(edge_weight_agg.get('min'))}/{_fmt_optional(edge_weight_agg.get('max'))}"
+            ),
+            "threshold_delta": _fmt_optional(_mean_optional(threshold_deltas)),
+            "threshold_grad_norm": _fmt_optional(_mean_optional(threshold_grads)),
+            "beta_branch_ratio": _fmt_optional(gate_agg.get("beta_branch_ratio")),
+            "same_label_weight_mean": _fmt_optional(gate_agg.get("same_label_weight_mean")),
+            "diff_label_weight_mean": _fmt_optional(gate_agg.get("diff_label_weight_mean")),
+            "homophily_before_after": f"{metadata['homophily_before']}/{metadata['homophily_after']}",
+            "test_acc": row["avg_test_acc"],
+            "notes": notes,
+        }
+        append_csv(args.gate_diagnostics_out, GATE_DIAGNOSTIC_FIELDS, gate_row)
+
+    log_path = args.formal_log_out
     ensure_parent_dir(log_path)
     with open(log_path, "a", encoding="utf-8") as handle:
-        handle.write(f"\n## {formal_row['timestamp']} {args.dataset} {method}\n\n")
+        timestamp = formal_row.get("timestamp", datetime.now().isoformat(timespec="seconds"))
+        handle.write(f"\n## {timestamp} {args.dataset} {method} ({result_type}, {rewire_variant})\n\n")
         handle.write("Command:\n\n")
         handle.write("```text\n")
         handle.write(f"{sys.executable} {' '.join(sys.argv)}\n")
@@ -400,8 +513,27 @@ def _append_formal_records(args, metadata, num_splits, row, losses, confidence_s
                 f"Edge weight: min={edge_weight_agg['min']:.6f}, max={edge_weight_agg['max']:.6f}, "
                 f"mean={edge_weight_agg['mean']:.6f}.\n\n"
             )
+        if gate_agg:
+            handle.write(
+                f"Gate diagnostics: beta_branch_ratio={gate_agg['beta_branch_ratio']:.6f}, "
+                f"same_label_weight_mean={gate_agg['same_label_weight_mean']:.6f}, "
+                f"diff_label_weight_mean={gate_agg['diff_label_weight_mean']:.6f}.\n\n"
+            )
         if notes:
             handle.write(f"Notes: {notes}\n\n")
+
+
+def _aggregate_gate_diagnostics(items):
+    import numpy as np
+
+    filtered = [item for item in items if item]
+    if not filtered:
+        return {}
+    keys = ["beta_branch_ratio", "same_label_weight_mean", "diff_label_weight_mean"]
+    return {
+        key: float(np.nanmean([item.get(key, float("nan")) for item in filtered]))
+        for key in keys
+    }
 
 
 def _append_dataset_status(args, data, metadata, num_features, num_classes, num_splits):
@@ -411,7 +543,7 @@ def _append_dataset_status(args, data, metadata, num_features, num_classes, num_
     if args.dataset in {"Cora", "Citeseer", "Pubmed"}:
         source = os.path.join(args.data_root, args.dataset)
     split_policy = "LargestConnectedComponents + RandomNodeSplit(train_rest, val=0.2, test=0.2)"
-    path = os.path.join("results", "dataset_status.md")
+    path = args.dataset_status_out
     ensure_parent_dir(path)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(f"\n## {datetime.now().isoformat(timespec='seconds')} {args.dataset}\n\n")
@@ -464,6 +596,7 @@ def main():
     edge_weight_stats = []
     threshold_grads = []
     threshold_deltas = []
+    gate_diagnostics = []
     total_train_time = 0.0
     full_start = time.time()
 
@@ -508,6 +641,8 @@ def main():
         losses["end"].append(result["last_train_loss"])
         if result.get("edge_weight_stats"):
             edge_weight_stats.append(result["edge_weight_stats"])
+        if result.get("gate_diagnostics"):
+            gate_diagnostics.append(result["gate_diagnostics"])
         threshold_grads.append(result.get("threshold_grad_norm"))
         threshold_deltas.append(result.get("threshold_max_abs_delta"))
         total_train_time += float(result["train_time"])
@@ -566,6 +701,7 @@ def main():
         edge_weight_stats,
         threshold_grads,
         threshold_deltas,
+        gate_diagnostics,
         metadata.get("warnings", ""),
     )
     print(f"Saved results to {args.out}")

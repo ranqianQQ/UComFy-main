@@ -4,7 +4,15 @@ from typing import Tuple
 import numpy as np
 import torch
 from torch_geometric.data import Data
-from torch_geometric.datasets import Amazon, Coauthor, Planetoid
+from torch_geometric.datasets import (
+    Amazon,
+    AttributedGraphDataset,
+    Coauthor,
+    Flickr,
+    HeterophilousGraphDataset,
+    Planetoid,
+)
+from torch_geometric.utils import to_undirected
 from torch_geometric.transforms import LargestConnectedComponents, NormalizeFeatures, RandomNodeSplit
 
 from utils.graph_utils import ensure_2d_masks
@@ -17,10 +25,16 @@ HETERO_NPZ = {
     "cornell.npz",
     "texas.npz",
     "wisconsin.npz",
+    "roman_empire.npz",
+    "roman-empire.npz",
     "chameleon_filtered.npz",
     "squirrel_filtered.npz",
     "actor.npz",
 }
+HETERO_PYG = {"Roman-empire", "roman-empire", "roman_empire"}
+FLICKR = {"Flickr", "flickr"}
+ATTRIBUTED = {"BlogCatalog", "blogcatalog"}
+OGB = {"ogbn-arxiv", "Ogbn-arxiv", "OGBN-Arxiv"}
 
 
 def _maybe_lcc(data: Data, enabled: bool) -> Data:
@@ -111,8 +125,46 @@ def load_dataset(args) -> Tuple[Data, int, int]:
         # ComFy-main reads the provided heterophilous masks, then applies LCC
         # and regenerates RandomNodeSplit masks for the actual experiments.
         data = _random_split(data, args.splits)
+    elif name in HETERO_PYG:
+        dataset_name = "Roman-empire" if name != "roman_empire" else "Roman-empire"
+        dataset = HeterophilousGraphDataset(root=root, name=dataset_name, transform=NormalizeFeatures())
+        data = _maybe_lcc(dataset[0], args.largest_connected_component)
+        data = _random_split(data, args.splits)
+        num_features = dataset.num_features
+        num_classes = dataset.num_classes
+    elif name in FLICKR:
+        dataset = Flickr(root=root, transform=NormalizeFeatures())
+        data = dataset[0]
+        num_features = dataset.num_features
+        num_classes = dataset.num_classes
+        ensure_2d_masks(data)
+    elif name in ATTRIBUTED:
+        dataset_name = "BlogCatalog"
+        dataset = AttributedGraphDataset(root=root, name=dataset_name, transform=NormalizeFeatures())
+        data = _maybe_lcc(dataset[0], args.largest_connected_component)
+        data = _random_split(data, args.splits)
+        num_features = dataset.num_features
+        num_classes = dataset.num_classes
+    elif name in OGB:
+        try:
+            from ogb.nodeproppred import PygNodePropPredDataset
+        except ImportError as exc:
+            raise ImportError("ogb is required for ogbn-arxiv. Install ogb in the active environment first.") from exc
+        dataset = PygNodePropPredDataset(name="ogbn-arxiv", root=root)
+        data = dataset[0]
+        data.y = data.y.view(-1).long()
+        data.edge_index = to_undirected(data.edge_index, num_nodes=data.num_nodes)
+        split_idx = dataset.get_idx_split()
+        data.train_mask = torch.zeros(data.num_nodes, 1, dtype=torch.bool)
+        data.val_mask = torch.zeros(data.num_nodes, 1, dtype=torch.bool)
+        data.test_mask = torch.zeros(data.num_nodes, 1, dtype=torch.bool)
+        data.train_mask[split_idx["train"], 0] = True
+        data.val_mask[split_idx["valid"], 0] = True
+        data.test_mask[split_idx["test"], 0] = True
+        num_features = int(data.x.shape[1])
+        num_classes = int(torch.unique(data.y).numel())
     else:
-        supported = sorted(PLANETOID | COAUTHOR | AMAZON | HETERO_NPZ)
+        supported = sorted(PLANETOID | COAUTHOR | AMAZON | HETERO_NPZ | HETERO_PYG | FLICKR | ATTRIBUTED | OGB)
         raise ValueError(f"Unsupported dataset {name}. Supported datasets: {supported}")
 
     ensure_2d_masks(data)

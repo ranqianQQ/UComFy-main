@@ -45,6 +45,18 @@ def parse_args():
     parser.add_argument("--candidate_topk_multiplier", type=int, default=20)
     parser.add_argument("--similarity_chunk_size", type=int, default=1024)
 
+    parser.add_argument("--formal_summary_out", type=str, default="results/formal_summary.csv")
+    parser.add_argument("--formal_log_out", type=str, default="results/formal_experiment_log.md")
+    parser.add_argument("--dataset_status_out", type=str, default="results/dataset_status.md")
+    parser.add_argument("--gate_diagnostics_out", type=str, default="results/gate_diagnostics.csv")
+    parser.add_argument(
+        "--result_type",
+        type=str,
+        default="auto",
+        choices=["auto", "smoke", "pilot", "formal-lite", "medium", "full-formal", "exploratory"],
+    )
+    parser.add_argument("--rewire_variant", type=str, default="auto")
+
     args = parser.parse_args()
     if args.ungsl_lr is None:
         args.ungsl_lr = args.lr

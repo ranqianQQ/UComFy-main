@@ -91,8 +91,22 @@ def train_model(
     if best_state is not None:
         model.load_state_dict(best_state)
     threshold_delta = None
+    gate_diagnostics = None
     if isinstance(model, UComFyGCN) and threshold_before is not None:
         threshold_delta = float((model.thresholds.detach() - threshold_before).abs().max().item())
+        if confidence is not None:
+            model.eval()
+            with torch.no_grad():
+                _ = model(data.x, data.edge_index, confidence=confidence, base_edge_weight=base_edge_weight)
+            from utils.gate_diagnostics import compute_gate_diagnostics
+
+            gate_diagnostics = compute_gate_diagnostics(
+                model,
+                data.edge_index,
+                data.y,
+                confidence,
+                base_edge_weight=base_edge_weight,
+            )
     return {
         "best_val_acc": best_val * 100.0,
         "test_acc_at_best_val": best_test * 100.0,
@@ -105,6 +119,7 @@ def train_model(
         "threshold_max_abs_delta": threshold_delta,
         "used_edge_weight": bool(getattr(model, "used_edge_weight", False)),
         "edge_weight_stats": getattr(model, "last_edge_weight_stats", None),
+        "gate_diagnostics": gate_diagnostics,
     }
 
 
