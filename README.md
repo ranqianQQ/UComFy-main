@@ -15,7 +15,7 @@ raw = sigmoid(confidence[source] - threshold[target]) / 0.5
 gate = raw if raw >= 1 else beta
 ```
 
-The node-wise `threshold` vector is an `nn.Parameter` trained with the final classifier.
+The node-wise `threshold` vector is an `nn.Parameter` trained with the final classifier. The default threshold is `0.1`, which is a practical scale for `exp(-entropy)` confidence on multi-class citation datasets. The gate forward values still match the UnGSL rule exactly; UComFy uses a straight-through gradient on the low-confidence beta branch so thresholds do not freeze when an initial threshold is conservative.
 
 ## Relation To ComFy
 
@@ -133,6 +133,16 @@ python main.py --dataset Cora --rewire_method feast --model UComFyGCN --budget_e
 - `utils/metrics.py`: homophily, adjusted homophily, and Louvain NMI.
 
 Results are appended to `results/ucomfy_results.csv` by default. Entropy/confidence caches are stored under `results/cache` unless `--no_cache_entropy` is used.
+
+## Diagnostics
+
+Each run prints light fusion diagnostics:
+
+- rewiring edge counts before/after plus added/deleted edges,
+- entropy and confidence min/max/mean and finite checks,
+- UComFy edge weight min/max/mean and finite checks,
+- whether thresholds are `nn.Parameter`, require gradients, are present in the optimizer, and changed or received gradients after training,
+- whether `UComFyGCN` passed `edge_weight` into `GCNConv`.
 
 ## Large Graph Note
 

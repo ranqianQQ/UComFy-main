@@ -1,5 +1,7 @@
 import os
+import sys
 import time
+from datetime import datetime
 from typing import Dict
 
 from arguments import parse_args
@@ -37,6 +39,50 @@ CSV_FIELDS = [
     "adjusted_homophily_after",
     "nmi_before",
     "nmi_after",
+]
+
+FORMAL_FIELDS = [
+    "timestamp",
+    "dataset",
+    "method",
+    "rewire_method",
+    "model",
+    "splits",
+    "epochs",
+    "pretrain_epochs",
+    "seed",
+    "budget_edges_add",
+    "budget_edges_delete",
+    "hidden_dimension",
+    "num_layers",
+    "dropout",
+    "lr",
+    "weight_decay",
+    "beta",
+    "init_threshold",
+    "ungsl_lr",
+    "normalize_confidence",
+    "val_acc_mean",
+    "val_acc_std",
+    "test_acc_mean",
+    "test_acc_std",
+    "loss_start",
+    "loss_end",
+    "num_edges_before",
+    "num_edges_after",
+    "edges_added",
+    "edges_deleted",
+    "confidence_min",
+    "confidence_max",
+    "confidence_mean",
+    "edge_weight_min",
+    "edge_weight_max",
+    "edge_weight_mean",
+    "threshold_grad_norm",
+    "threshold_delta",
+    "csv_path",
+    "status",
+    "notes",
 ]
 
 
@@ -125,6 +171,8 @@ def build_model(args, num_features: int, num_classes: int, num_nodes: int):
 
 
 def get_confidence_for_split(data, args, split_idx: int, num_features: int, num_classes: int, device):
+    import torch
+
     from modules.uncertainty import (
         confidence_cache_path,
         confidence_from_logits,
@@ -148,6 +196,7 @@ def get_confidence_for_split(data, args, split_idx: int, num_features: int, num_
     if args.cache_entropy:
         entropy, confidence = load_cached_confidence(cache_path, device)
         if entropy is not None and confidence is not None:
+            _print_tensor_stats("confidence", confidence)
             return confidence.to(device)
 
     train_mask = mask_for_split(data.train_mask, split_idx)
@@ -166,9 +215,214 @@ def get_confidence_for_split(data, args, split_idx: int, num_features: int, num_
         weight_decay=args.weight_decay,
     )
     entropy, confidence = confidence_from_logits(logits, normalize=args.normalize_confidence)
+    _print_tensor_stats("entropy", entropy)
+    _print_tensor_stats("confidence", confidence)
     if args.cache_entropy:
         save_cached_confidence(cache_path, entropy, confidence)
     return confidence.to(device)
+
+
+def _print_tensor_stats(name: str, tensor) -> None:
+    import torch
+
+    detached = tensor.detach()
+    finite = torch.isfinite(detached)
+    has_nan = bool(torch.isnan(detached).any().item()) if detached.numel() else False
+    has_inf = bool(torch.isinf(detached).any().item()) if detached.numel() else False
+    min_val = float(detached.min().item()) if detached.numel() else float("nan")
+    max_val = float(detached.max().item()) if detached.numel() else float("nan")
+    mean_val = float(detached.mean().item()) if detached.numel() else float("nan")
+    print(
+        f"[diagnostic] {name}: min={min_val:.6f}, max={max_val:.6f}, "
+        f"mean={mean_val:.6f}, finite={bool(finite.all().item()) if detached.numel() else True}, "
+        f"nan={has_nan}, inf={has_inf}"
+    )
+    return {
+        "min": min_val,
+        "max": max_val,
+        "mean": mean_val,
+        "finite": bool(finite.all().item()) if detached.numel() else True,
+        "nan": has_nan,
+        "inf": has_inf,
+    }
+
+
+def _tensor_stats(tensor) -> Dict[str, object]:
+    import torch
+
+    detached = tensor.detach()
+    finite = torch.isfinite(detached)
+    return {
+        "min": float(detached.min().item()) if detached.numel() else float("nan"),
+        "max": float(detached.max().item()) if detached.numel() else float("nan"),
+        "mean": float(detached.mean().item()) if detached.numel() else float("nan"),
+        "finite": bool(finite.all().item()) if detached.numel() else True,
+        "nan": bool(torch.isnan(detached).any().item()) if detached.numel() else False,
+        "inf": bool(torch.isinf(detached).any().item()) if detached.numel() else False,
+    }
+
+
+def _print_ucomfy_diagnostics(model, result: Dict[str, object]) -> None:
+    import torch
+
+    from models import UComFyGCN
+
+    if not isinstance(model, UComFyGCN):
+        return
+    print(f"[diagnostic] thresholds is nn.Parameter: {isinstance(model.thresholds, torch.nn.Parameter)}")
+    print(f"[diagnostic] thresholds.requires_grad: {result['threshold_requires_grad']}")
+    print(f"[diagnostic] optimizer contains thresholds: {result['optimizer_has_thresholds']}")
+    print(f"[diagnostic] threshold grad norm: {result['threshold_grad_norm']}")
+    print(f"[diagnostic] threshold max abs delta after training: {result['threshold_max_abs_delta']}")
+    print(f"[diagnostic] UComFyGCN passed edge_weight to GCNConv: {result['used_edge_weight']}")
+    stats = result.get("edge_weight_stats")
+    if stats:
+        print(
+            "[diagnostic] edge_weight: "
+            f"min={stats['min']:.6f}, max={stats['max']:.6f}, "
+            f"mean={stats['mean']:.6f}, finite={stats['finite']}, "
+            f"nan={stats.get('nan', False)}, inf={stats.get('inf', False)}"
+        )
+
+
+def _method_name(args) -> str:
+    if args.rewire_method == "none" and args.model == "GCN":
+        return "GCN"
+    if args.rewire_method == "comfy" and args.model == "GCN":
+        return "ComFy+GCN"
+    if args.rewire_method == "comfy" and args.model == "UComFyGCN":
+        return "ComFy+UComFyGCN"
+    if args.rewire_method == "feast" and args.model == "GCN":
+        return "FeaSt+GCN"
+    if args.rewire_method == "feast" and args.model == "UComFyGCN":
+        return "FeaSt+UComFyGCN"
+    return f"{args.rewire_method}+{args.model}"
+
+
+def _mean_optional(values):
+    import numpy as np
+
+    filtered = [float(value) for value in values if value is not None]
+    return float(np.mean(filtered)) if filtered else None
+
+
+def _aggregate_stats(stats):
+    import numpy as np
+
+    filtered = [item for item in stats if item]
+    if not filtered:
+        return {}
+    return {
+        "min": float(np.min([item["min"] for item in filtered])),
+        "max": float(np.max([item["max"] for item in filtered])),
+        "mean": float(np.mean([item["mean"] for item in filtered])),
+    }
+
+
+def _fmt_optional(value):
+    return "" if value is None else f"{float(value):.6f}"
+
+
+def _append_formal_records(args, metadata, num_splits, row, losses, confidence_stats, edge_weight_stats, threshold_grads, threshold_deltas, notes):
+    from utils.logging_utils import append_csv, ensure_parent_dir
+
+    method = _method_name(args)
+    confidence_agg = _aggregate_stats(confidence_stats)
+    edge_weight_agg = _aggregate_stats(edge_weight_stats)
+    formal_row = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "dataset": args.dataset,
+        "method": method,
+        "rewire_method": args.rewire_method,
+        "model": args.model,
+        "splits": num_splits,
+        "epochs": args.epochs,
+        "pretrain_epochs": args.pretrain_epochs,
+        "seed": args.seed,
+        "budget_edges_add": args.budget_edges_add,
+        "budget_edges_delete": args.budget_edges_delete,
+        "hidden_dimension": args.hidden_dimension,
+        "num_layers": args.num_layers,
+        "dropout": args.dropout,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "beta": args.beta,
+        "init_threshold": args.init_threshold,
+        "ungsl_lr": args.ungsl_lr,
+        "normalize_confidence": args.normalize_confidence,
+        "val_acc_mean": row["avg_val_acc"],
+        "val_acc_std": row["std_val_acc"],
+        "test_acc_mean": row["avg_test_acc"],
+        "test_acc_std": row["std_test_acc"],
+        "loss_start": _fmt_optional(_mean_optional(losses["start"])),
+        "loss_end": _fmt_optional(_mean_optional(losses["end"])),
+        "num_edges_before": metadata["num_edges_before"],
+        "num_edges_after": metadata["num_edges_after"],
+        "edges_added": metadata["edges_added"],
+        "edges_deleted": metadata["edges_deleted"],
+        "confidence_min": _fmt_optional(confidence_agg.get("min")),
+        "confidence_max": _fmt_optional(confidence_agg.get("max")),
+        "confidence_mean": _fmt_optional(confidence_agg.get("mean")),
+        "edge_weight_min": _fmt_optional(edge_weight_agg.get("min")),
+        "edge_weight_max": _fmt_optional(edge_weight_agg.get("max")),
+        "edge_weight_mean": _fmt_optional(edge_weight_agg.get("mean")),
+        "threshold_grad_norm": _fmt_optional(_mean_optional(threshold_grads)),
+        "threshold_delta": _fmt_optional(_mean_optional(threshold_deltas)),
+        "csv_path": args.out,
+        "status": "success",
+        "notes": notes,
+    }
+    append_csv(os.path.join("results", "formal_summary.csv"), FORMAL_FIELDS, formal_row)
+
+    log_path = os.path.join("results", "formal_experiment_log.md")
+    ensure_parent_dir(log_path)
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(f"\n## {formal_row['timestamp']} {args.dataset} {method}\n\n")
+        handle.write("Command:\n\n")
+        handle.write("```text\n")
+        handle.write(f"{sys.executable} {' '.join(sys.argv)}\n")
+        handle.write("```\n\n")
+        handle.write(
+            f"Result: val {row['avg_val_acc']} +/- {row['std_val_acc']}, "
+            f"test {row['avg_test_acc']} +/- {row['std_test_acc']}.\n\n"
+        )
+        handle.write(
+            f"Rewiring: before={metadata['num_edges_before']}, after={metadata['num_edges_after']}, "
+            f"added={metadata['edges_added']}, deleted={metadata['edges_deleted']}.\n\n"
+        )
+        if confidence_agg:
+            handle.write(
+                f"Confidence: min={confidence_agg['min']:.6f}, max={confidence_agg['max']:.6f}, "
+                f"mean={confidence_agg['mean']:.6f}.\n\n"
+            )
+        if edge_weight_agg:
+            handle.write(
+                f"Edge weight: min={edge_weight_agg['min']:.6f}, max={edge_weight_agg['max']:.6f}, "
+                f"mean={edge_weight_agg['mean']:.6f}.\n\n"
+            )
+        if notes:
+            handle.write(f"Notes: {notes}\n\n")
+
+
+def _append_dataset_status(args, data, metadata, num_features, num_classes, num_splits):
+    from utils.logging_utils import ensure_parent_dir
+
+    source = os.path.join(args.hetero_data_path or args.data_root, args.dataset)
+    if args.dataset in {"Cora", "Citeseer", "Pubmed"}:
+        source = os.path.join(args.data_root, args.dataset)
+    split_policy = "LargestConnectedComponents + RandomNodeSplit(train_rest, val=0.2, test=0.2)"
+    path = os.path.join("results", "dataset_status.md")
+    ensure_parent_dir(path)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"\n## {datetime.now().isoformat(timespec='seconds')} {args.dataset}\n\n")
+        handle.write(f"- Source/path: `{source}`\n")
+        handle.write(f"- Nodes: {data.num_nodes}\n")
+        handle.write(f"- Undirected edges before rewiring: {metadata['num_edges_before']}\n")
+        handle.write(f"- Features: {num_features}\n")
+        handle.write(f"- Classes: {num_classes}\n")
+        handle.write(f"- Splits used: {num_splits}\n")
+        handle.write(f"- Split policy: {split_policy}\n")
+        handle.write("- ComFy-main consistency: yes, for this formal sanity setting.\n")
 
 
 def main():
@@ -191,6 +445,13 @@ def main():
 
     print(f"Running rewiring method: {args.rewire_method}")
     rewired_data, metadata = run_rewiring(data, args)
+    print(
+        "[diagnostic] rewiring: "
+        f"num_edges_before={metadata['num_edges_before']}, "
+        f"num_edges_after={metadata['num_edges_after']}, "
+        f"edges_added={metadata['edges_added']}, "
+        f"edges_deleted={metadata['edges_deleted']}"
+    )
     if metadata.get("warnings"):
         print(f"Rewiring warning: {metadata['warnings']}")
 
@@ -198,8 +459,15 @@ def main():
     num_splits = min(args.splits, rewired_data.train_mask.shape[1])
     val_scores = []
     test_scores = []
+    losses = {"start": [], "end": []}
+    confidence_stats = []
+    edge_weight_stats = []
+    threshold_grads = []
+    threshold_deltas = []
     total_train_time = 0.0
     full_start = time.time()
+
+    _append_dataset_status(args, data, metadata, num_features, num_classes, num_splits)
 
     for split_idx in range(num_splits):
         print(f"Split {split_idx + 1}/{num_splits}")
@@ -218,6 +486,7 @@ def main():
                 num_classes,
                 device,
             )
+            confidence_stats.append(_tensor_stats(confidence))
 
         model = build_model(args, num_features, num_classes, rewired_data.num_nodes).to(device)
         result = train_model(
@@ -235,7 +504,18 @@ def main():
         )
         val_scores.append(float(result["best_val_acc"]))
         test_scores.append(float(result["test_acc_at_best_val"]))
+        losses["start"].append(result["first_train_loss"])
+        losses["end"].append(result["last_train_loss"])
+        if result.get("edge_weight_stats"):
+            edge_weight_stats.append(result["edge_weight_stats"])
+        threshold_grads.append(result.get("threshold_grad_norm"))
+        threshold_deltas.append(result.get("threshold_max_abs_delta"))
         total_train_time += float(result["train_time"])
+        print(
+            f"[diagnostic] train loss: first={result['first_train_loss']:.6f}, "
+            f"last={result['last_train_loss']:.6f}"
+        )
+        _print_ucomfy_diagnostics(model, result)
         print(
             f"Split {split_idx}: val={result['best_val_acc']:.2f}, "
             f"test@best_val={result['test_acc_at_best_val']:.2f}"
@@ -276,6 +556,18 @@ def main():
         "nmi_after": metadata["nmi_after"],
     }
     append_csv(args.out, CSV_FIELDS, row)
+    _append_formal_records(
+        args,
+        metadata,
+        num_splits,
+        row,
+        losses,
+        confidence_stats,
+        edge_weight_stats,
+        threshold_grads,
+        threshold_deltas,
+        metadata.get("warnings", ""),
+    )
     print(f"Saved results to {args.out}")
     print(f"Mean validation accuracy: {np.mean(val_scores):.2f} +/- {np.std(val_scores):.2f}")
     print(f"Mean test accuracy: {np.mean(test_scores):.2f} +/- {np.std(test_scores):.2f}")

@@ -1,5 +1,6 @@
 from typing import Iterable
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
@@ -54,6 +55,8 @@ class UComFyGCN(nn.Module):
         super().__init__()
         self.gcn = GCN(in_channels, hidden_channels, out_channels, num_layers=num_layers, dropout=dropout)
         self.gate = UComFyGate(num_nodes=num_nodes, beta=beta, init_threshold=init_threshold)
+        self.used_edge_weight = False
+        self.last_edge_weight_stats = None
 
     @property
     def thresholds(self):
@@ -72,6 +75,19 @@ class UComFyGCN(nn.Module):
 
     def forward(self, x, edge_index, confidence=None, base_edge_weight=None):
         edge_weight = base_edge_weight
+        self.used_edge_weight = False
+        self.last_edge_weight_stats = None
         if confidence is not None:
             edge_weight = self.gate(edge_index, confidence, base_edge_weight)
+            self.used_edge_weight = True
+            edge_weight_detached = edge_weight.detach()
+            finite = torch.isfinite(edge_weight_detached)
+            self.last_edge_weight_stats = {
+                "min": float(edge_weight_detached.min().item()) if edge_weight_detached.numel() else float("nan"),
+                "max": float(edge_weight_detached.max().item()) if edge_weight_detached.numel() else float("nan"),
+                "mean": float(edge_weight_detached.mean().item()) if edge_weight_detached.numel() else float("nan"),
+                "finite": bool(finite.all().item()) if edge_weight_detached.numel() else True,
+                "nan": bool(torch.isnan(edge_weight_detached).any().item()) if edge_weight_detached.numel() else False,
+                "inf": bool(torch.isinf(edge_weight_detached).any().item()) if edge_weight_detached.numel() else False,
+            }
         return self.gcn(x, edge_index, edge_weight=edge_weight)

@@ -108,8 +108,9 @@ def load_dataset(args) -> Tuple[Data, int, int]:
     elif name in HETERO_NPZ or name.endswith(".npz"):
         data, num_features, num_classes = _load_npz_dataset(name, args.hetero_data_path)
         data = _maybe_lcc(data, args.largest_connected_component)
-        if data.train_mask.shape[1] < args.splits:
-            data = _random_split(data, args.splits)
+        # ComFy-main reads the provided heterophilous masks, then applies LCC
+        # and regenerates RandomNodeSplit masks for the actual experiments.
+        data = _random_split(data, args.splits)
     else:
         supported = sorted(PLANETOID | COAUTHOR | AMAZON | HETERO_NPZ)
         raise ValueError(f"Unsupported dataset {name}. Supported datasets: {supported}")

@@ -46,7 +46,10 @@ def confidence_cache_path(
 def load_cached_confidence(path: str, device: torch.device) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
     if not os.path.exists(path):
         return None, None
-    payload = torch.load(path, map_location=device)
+    try:
+        payload = torch.load(path, map_location=device, weights_only=True)
+    except TypeError:
+        payload = torch.load(path, map_location=device)
     return payload.get("entropy"), payload.get("confidence")
 
 

@@ -3,3 +3,21 @@ __pycache__/
 results/cache/*.pt
 results/cache/pycache/
 results/cache/compilepyc/
+
+# Python cache
+__pycache__/
+*.pyc
+compilepyc/
+
+# datasets
+data/
+
+# generated experiment outputs
+results/*
+!results/.gitkeep
+!results/cache/
+!results/cache/.gitkeep
+
+# environment exports
+environment_*.yml
+pip_freeze_*.txt

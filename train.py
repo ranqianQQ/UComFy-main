@@ -52,6 +52,19 @@ def train_model(
     best_state = None
     best_val = -1.0
     best_test = -1.0
+    first_train_loss = None
+    last_train_loss = None
+    threshold_before = None
+    threshold_grad_norm = None
+    optimizer_has_thresholds = False
+    if isinstance(model, UComFyGCN):
+        threshold_before = model.thresholds.detach().clone()
+        threshold_param_id = id(model.thresholds)
+        optimizer_has_thresholds = any(
+            id(param) == threshold_param_id
+            for group in optimizer.param_groups
+            for param in group["params"]
+        )
     start = time.time()
 
     for _ in range(epochs):
@@ -60,7 +73,12 @@ def train_model(
         logits = model(data.x, data.edge_index, confidence=confidence, base_edge_weight=base_edge_weight) \
             if isinstance(model, UComFyGCN) else model(data.x, data.edge_index, edge_weight=base_edge_weight)
         loss = F.cross_entropy(logits[train_mask], data.y[train_mask])
+        if first_train_loss is None:
+            first_train_loss = float(loss.detach().item())
+        last_train_loss = float(loss.detach().item())
         loss.backward()
+        if isinstance(model, UComFyGCN) and model.thresholds.grad is not None:
+            threshold_grad_norm = float(model.thresholds.grad.detach().norm().item())
         optimizer.step()
 
         val_result = evaluate(model, data, val_mask, confidence=confidence, base_edge_weight=base_edge_weight)
@@ -72,10 +90,21 @@ def train_model(
 
     if best_state is not None:
         model.load_state_dict(best_state)
+    threshold_delta = None
+    if isinstance(model, UComFyGCN) and threshold_before is not None:
+        threshold_delta = float((model.thresholds.detach() - threshold_before).abs().max().item())
     return {
         "best_val_acc": best_val * 100.0,
         "test_acc_at_best_val": best_test * 100.0,
         "train_time": time.time() - start,
+        "first_train_loss": first_train_loss,
+        "last_train_loss": last_train_loss,
+        "optimizer_has_thresholds": optimizer_has_thresholds,
+        "threshold_requires_grad": bool(model.thresholds.requires_grad) if isinstance(model, UComFyGCN) else False,
+        "threshold_grad_norm": threshold_grad_norm,
+        "threshold_max_abs_delta": threshold_delta,
+        "used_edge_weight": bool(getattr(model, "used_edge_weight", False)),
+        "edge_weight_stats": getattr(model, "last_edge_weight_stats", None),
     }
 
 

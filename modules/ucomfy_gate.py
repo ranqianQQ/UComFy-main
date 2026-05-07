@@ -31,7 +31,11 @@ class UncertaintyEdgeGate(nn.Module):
                 raise ValueError("base_edge_weight must have one value per edge.")
 
         raw = torch.sigmoid(confidence[source] - self.thresholds[target]) / 0.5
-        gate = torch.where(raw >= 1.0, raw, torch.full_like(raw, self.beta))
+        beta = torch.full_like(raw, self.beta)
+        # Forward values match the UnGSL rule exactly; the low branch uses a
+        # straight-through gradient so node thresholds can recover from a
+        # conservative initialization instead of becoming permanently frozen.
+        gate = torch.where(raw >= 1.0, raw, beta + raw - raw.detach())
         return base * gate
 
 
