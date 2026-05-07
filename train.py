@@ -47,11 +47,14 @@ def train_model(
     ungsl_lr: float,
     confidence: Optional[torch.Tensor] = None,
     base_edge_weight: Optional[torch.Tensor] = None,
+    eval_best_val: bool = True,
 ) -> Dict[str, object]:
     optimizer = build_optimizer(model, lr, weight_decay, ungsl_lr)
     best_state = None
     best_val = -1.0
     best_test = -1.0
+    final_val = -1.0
+    final_test = -1.0
     first_train_loss = None
     last_train_loss = None
     threshold_before = None
@@ -83,12 +86,14 @@ def train_model(
 
         val_result = evaluate(model, data, val_mask, confidence=confidence, base_edge_weight=base_edge_weight)
         test_result = evaluate(model, data, test_mask, confidence=confidence, base_edge_weight=base_edge_weight)
+        final_val = val_result["acc"]
+        final_test = test_result["acc"]
         if val_result["acc"] >= best_val:
             best_val = val_result["acc"]
             best_test = test_result["acc"]
             best_state = copy.deepcopy(model.state_dict())
 
-    if best_state is not None:
+    if eval_best_val and best_state is not None:
         model.load_state_dict(best_state)
     threshold_delta = None
     gate_diagnostics = None
@@ -108,8 +113,8 @@ def train_model(
                 base_edge_weight=base_edge_weight,
             )
     return {
-        "best_val_acc": best_val * 100.0,
-        "test_acc_at_best_val": best_test * 100.0,
+        "best_val_acc": (best_val if eval_best_val else final_val) * 100.0,
+        "test_acc_at_best_val": (best_test if eval_best_val else final_test) * 100.0,
         "train_time": time.time() - start,
         "first_train_loss": first_train_loss,
         "last_train_loss": last_train_loss,

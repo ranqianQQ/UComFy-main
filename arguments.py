@@ -18,6 +18,9 @@ def parse_args():
     parser.add_argument("--weight_decay", type=float, default=5e-4)
     parser.add_argument("--pretrain_epochs", type=int, default=100)
     parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--eval_best_val", dest="eval_best_val", action="store_true")
+    parser.add_argument("--no_eval_best_val", dest="eval_best_val", action="store_false")
+    parser.set_defaults(eval_best_val=True)
 
     parser.add_argument("--budget_edges_add", type=int, default=100)
     parser.add_argument("--budget_edges_delete", type=int, default=100)
