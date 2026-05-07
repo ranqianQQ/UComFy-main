@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument("--budget_edges_delete", type=int, default=100)
     parser.add_argument("--beta", type=float, default=0.2)
     parser.add_argument("--init_threshold", type=float, default=0.1)
+    parser.add_argument("--gate_residual_alpha", type=float, default=1.0)
     parser.add_argument("--ungsl_lr", type=float, default=None)
     parser.add_argument("--normalize_confidence", action="store_true")
 

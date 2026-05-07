@@ -5,11 +5,18 @@ import torch.nn as nn
 class UncertaintyEdgeGate(nn.Module):
     """UnGSL-style directional gate for PyG edge_index tensors."""
 
-    def __init__(self, num_nodes: int, beta: float = 0.2, init_threshold: float = 0.5):
+    def __init__(
+        self,
+        num_nodes: int,
+        beta: float = 0.2,
+        init_threshold: float = 0.5,
+        gate_residual_alpha: float = 1.0,
+    ):
         super().__init__()
         self.num_nodes = int(num_nodes)
         self.beta = float(beta)
         self.init_threshold = float(init_threshold)
+        self.gate_residual_alpha = float(gate_residual_alpha)
         self.thresholds = nn.Parameter(torch.empty(self.num_nodes))
         self.reset_parameters()
 
@@ -36,6 +43,7 @@ class UncertaintyEdgeGate(nn.Module):
         # straight-through gradient so node thresholds can recover from a
         # conservative initialization instead of becoming permanently frozen.
         gate = torch.where(raw >= 1.0, raw, beta + raw - raw.detach())
+        gate = 1.0 + self.gate_residual_alpha * (gate - 1.0)
         return base * gate
 
 

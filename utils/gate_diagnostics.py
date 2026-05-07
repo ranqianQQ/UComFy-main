@@ -18,6 +18,7 @@ def compute_gate_diagnostics(
     base = torch.ones_like(raw) if base_edge_weight is None else base_edge_weight.to(raw.device).view(-1)
     beta = torch.full_like(raw, float(model.gate.beta))
     gate = torch.where(raw >= 1.0, raw, beta)
+    gate = 1.0 + float(model.gate.gate_residual_alpha) * (gate - 1.0)
     edge_weight = base * gate
 
     same_label = y[source] == y[target]

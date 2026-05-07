@@ -194,6 +194,7 @@ def build_model(args, num_features: int, num_classes: int, num_nodes: int):
         dropout=args.dropout,
         beta=args.beta,
         init_threshold=args.init_threshold,
+        gate_residual_alpha=args.gate_residual_alpha,
     )
 
 
@@ -402,6 +403,9 @@ def _append_formal_records(
     method = _method_name(args)
     result_type = _infer_result_type(args)
     rewire_variant = _infer_rewire_variant(args)
+    notes_parts = [notes] if notes else []
+    notes_parts.append(f"gate_residual_alpha={args.gate_residual_alpha}")
+    notes = "; ".join(notes_parts)
     confidence_agg = _aggregate_stats(confidence_stats)
     edge_weight_agg = _aggregate_stats(edge_weight_stats)
     formal_row = {
@@ -499,6 +503,7 @@ def _append_formal_records(
             f"Result: val {row['avg_val_acc']} +/- {row['std_val_acc']}, "
             f"test {row['avg_test_acc']} +/- {row['std_test_acc']}.\n\n"
         )
+        handle.write(f"Gate residual alpha: {args.gate_residual_alpha}.\n\n")
         handle.write(
             f"Rewiring: before={metadata['num_edges_before']}, after={metadata['num_edges_after']}, "
             f"added={metadata['edges_added']}, deleted={metadata['edges_deleted']}.\n\n"

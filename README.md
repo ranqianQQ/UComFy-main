@@ -13,9 +13,11 @@ confidence[source] = exp(-entropy[source])
 entropy = -sum softmax(logits) * log(softmax(logits) + eps)
 raw = sigmoid(confidence[source] - threshold[target]) / 0.5
 gate = raw if raw >= 1 else beta
+edge_weight = w_comfy * (1 + gate_residual_alpha * (gate - 1))
 ```
 
-The node-wise `threshold` vector is an `nn.Parameter` trained with the final classifier. The default threshold is `0.1`, which is a practical scale for `exp(-entropy)` confidence on multi-class citation datasets. The gate forward values still match the UnGSL rule exactly; UComFy uses a straight-through gradient on the low-confidence beta branch so thresholds do not freeze when an initial threshold is conservative.
+The node-wise `threshold` vector is an `nn.Parameter` trained with the final classifier. The default threshold is `0.1`, which is a practical scale for `exp(-entropy)` confidence on multi-class citation datasets. At the default `gate_residual_alpha=1.0`, the gate forward values still match the UnGSL rule exactly; UComFy uses a straight-through gradient on the low-confidence beta branch so thresholds do not freeze when an initial threshold is conservative.
+`gate_residual_alpha` defaults to `1.0`, which exactly preserves the original full-strength gate; smaller values are exploratory damped-gate ablations that keep edge weights closer to the rewired graph.
 
 ## Relation To ComFy
 

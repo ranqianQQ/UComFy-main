@@ -51,10 +51,16 @@ class UComFyGCN(nn.Module):
         dropout: float = 0.5,
         beta: float = 0.2,
         init_threshold: float = 0.5,
+        gate_residual_alpha: float = 1.0,
     ):
         super().__init__()
         self.gcn = GCN(in_channels, hidden_channels, out_channels, num_layers=num_layers, dropout=dropout)
-        self.gate = UComFyGate(num_nodes=num_nodes, beta=beta, init_threshold=init_threshold)
+        self.gate = UComFyGate(
+            num_nodes=num_nodes,
+            beta=beta,
+            init_threshold=init_threshold,
+            gate_residual_alpha=gate_residual_alpha,
+        )
         self.used_edge_weight = False
         self.last_edge_weight_stats = None
 
